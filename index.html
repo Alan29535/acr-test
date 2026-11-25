@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Video Quality Rating</title>
+<style>
+  :root { --grey: #7f7f7f; --ink: #111; --paper: #f4f4f4; --accent: #1f5fbf; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--paper); color: var(--ink);
+    font: 17px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  .page { display: none; max-width: 720px; margin: 0 auto; padding: 40px 16px; }
+  .page.on { display: block; }
+  h1 { font-size: 26px; margin: 0 0 16px; }
+  button { font: inherit; padding: 12px 22px; border: 0; border-radius: 8px; background: var(--accent);
+    color: #fff; cursor: pointer; }
+  button:disabled { background: #9aa7ba; cursor: default; }
+  .bar { height: 10px; background: #ddd; border-radius: 5px; overflow: hidden; margin: 16px 0; }
+  .bar > div { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+  .muted { color: #555; font-size: 15px; }
+  .err { color: #b00020; font-weight: 600; }
+  /* full-screen stage: grey between clips (P.910), black behind the video */
+  #stage { display: none; position: fixed; inset: 0; background: var(--grey); color: #fff; }
+  #stage.on { display: flex; align-items: center; justify-content: center; flex-direction: column; }
+  #stage video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; display: none; }
+  #label { font-size: 34px; font-weight: 600; text-shadow: 0 1px 2px #0005; }
+  #rate { display: none; text-align: center; }
+  #rate p { font-size: 24px; margin: 0 0 22px; }
+  #rate .opts { display: flex; flex-direction: column; gap: 10px; width: min(360px, 90vw); margin: 0 auto; }
+  #rate .opts button { background: #fff; color: var(--ink); text-align: left; padding: 14px 18px; font-size: 19px; }
+  #rate .opts button:hover { background: #e8eefb; }
+  #rate .opts b { display: inline-block; width: 28px; }
+</style>
+</head>
+<body>
+
+<!-- 1. consent -->
+<section class="page on" id="p-consent">
+  <h1>Video Quality Rating</h1>
+  <p>This is a short study for a Digital Video Processing course project at Chulalongkorn University.
+     You will watch <b>18 short videos</b> (10 seconds each, about 6 minutes in total) and rate the picture quality of each one.</p>
+  <p>No personal information is collected. Your answers are stored under a random ID. Taking part is voluntary,
+     and you can stop at any time by closing this page; nothing is submitted until the end.</p>
+  <p>Please use a <b>laptop or desktop computer</b> in a quiet room, set the screen to full brightness,
+     and sit at a normal viewing distance.</p>
+  <p><label><input type="checkbox" id="agree"> I agree to take part in this study.</label></p>
+  <button id="b-consent" disabled>Continue</button>
+</section>
+
+<!-- 2. loading + playback check -->
+<section class="page" id="p-load">
+  <h1>Preparing the videos…</h1>
+  <p class="muted">All videos are downloaded first so that playback will not pause.</p>
+  <div class="bar"><div id="bar"></div></div>
+  <p id="load-msg" class="muted"></p>
+</section>
+
+<!-- 3. instructions -->
+<section class="page" id="p-instr">
+  <h1>Instructions</h1>
+  <p>Each video plays <b>once</b>, in full screen. After it ends, rate the <b>overall picture quality</b>:</p>
+  <p><b>5</b> Excellent · <b>4</b> Good · <b>3</b> Fair · <b>2</b> Poor · <b>1</b> Bad</p>
+  <p>There are no right or wrong answers; give your first impression.
+     The first <b>3 videos are practice</b> to show you the range of quality.</p>
+  <button id="b-start">Start (full screen)</button>
+</section>
+
+<!-- 4. between practice and test -->
+<section class="page" id="p-mid">
+  <h1>Practice finished</h1>
+  <p>Now the real test begins: <b>15 videos</b>. Rate each one the same way.</p>
+  <button id="b-test">Start the test</button>
+</section>
+
+<!-- 5. end -->
+<section class="page" id="p-end">
+  <h1>Thank you!</h1>
+  <p id="end-msg">Submitting your answers…</p>
+  <p class="muted">Your ID: <code id="end-id"></code></p>
+  <p id="end-dl" style="display:none"><button id="b-dl">Download my answers (CSV)</button></p>
+</section>
+
+<div id="stage">
+  <video id="vid" muted playsinline preload="auto"></video>
+  <div id="label"></div>
+  <div id="rate">
+    <p>Overall picture quality of this video?</p>
+    <div class="opts">
+      <button data-s="5"><b>5</b>Excellent</button>
+      <button data-s="4"><b>4</b>Good</button>
+      <button data-s="3"><b>3</b>Fair</button>
+      <button data-s="2"><b>2</b>Poor</button>
+      <button data-s="1"><b>1</b>Bad</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ---------------------------------------------------------------- configuration
+// Google Form that receives the results: one "Paragraph" question.
+//   FORM_URL : https://docs.google.com/forms/d/e/<FORM_ID>/formResponse
+//   FORM_ENTRY: the entry id of that question, e.g. "entry.123456789"
+// Leave empty for a local pilot: the page then offers a CSV download instead.
+const CONFIG = {
+  FORM_URL: "https://docs.google.com/forms/d/e/1FAIpQLSc3dtaBNQ1YewAaCONj-A8r3JBCZDtZPK6Z4F5CWturXx4VwA/formResponse",
+  FORM_ENTRY: "entry.1927336353",
+  PRACTICE: ["p1", "p2", "p3"],                 // fixed order: bad -> good -> excellent
+  TEST: Array.from({length: 15}, (_, i) => "v" + String(i + 1).padStart(2, "0")),
+  LABEL_MS: 1500,                               // "Video k of N" before each clip
+  VERSION: "acr-web-1"
+};
+
+// ---------------------------------------------------------------- helpers
+const $ = id => document.getElementById(id);
+const show = id => { document.querySelectorAll(".page").forEach(p => p.classList.remove("on")); if (id) $(id).classList.add("on"); };
+const rid = () => "P" + Array.from(crypto.getRandomValues(new Uint8Array(4)), b => b.toString(16).padStart(2, "0")).join("");
+function shuffle(a) {                                      // Fisher-Yates with crypto randomness
+  a = a.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = crypto.getRandomValues(new Uint32Array(1))[0] % (i + 1);
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+function store(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+
+const S = {                                                // session record
+  observer_id: rid(), version: CONFIG.VERSION, started: new Date().toISOString(), finished: null,
+  user_agent: navigator.userAgent,
+  screen: { w: screen.width, h: screen.height, dpr: window.devicePixelRatio },
+  test_order: shuffle(CONFIG.TEST), trials: []
+};
+const blobs = {};
+
+// ---------------------------------------------------------------- 1. consent
+$("agree").onchange = e => $("b-consent").disabled = !e.target.checked;
+$("b-consent").onclick = () => { show("p-load"); load(); };
+
+// ---------------------------------------------------------------- 2. download all + playback check
+async function load() {
+  const all = CONFIG.PRACTICE.concat(CONFIG.TEST);
+  let done = 0;
+  try {
+    for (const id of all) {
+      const r = await fetch("videos/" + id + ".mp4");
+      if (!r.ok) throw new Error("HTTP " + r.status + " for " + id);
+      blobs[id] = URL.createObjectURL(await r.blob());
+      $("bar").style.width = (100 * ++done / all.length) + "%";
+      $("load-msg").textContent = done + " / " + all.length;
+    }
+  } catch (e) {
+    $("load-msg").innerHTML = '<span class="err">Download failed (' + e.message + '). Please check your connection and reload the page.</span>';
+    return;
+  }
+  $("load-msg").textContent = "Checking that your browser can play the videos…";
+  if (!(await canPlay(blobs[CONFIG.PRACTICE[0]]))) {
+    $("load-msg").innerHTML = '<span class="err">Your browser cannot play these videos (HEVC/H.265).</span><br>' +
+      'Please open this link in <b>Safari</b> or <b>Chrome</b> on a Mac, or in <b>Microsoft Edge / Chrome</b> on a recent Windows PC.';
+    return;
+  }
+  show("p-instr");
+}
+function canPlay(url) {
+  return new Promise(res => {
+    const v = document.createElement("video");
+    v.muted = true; v.playsInline = true;
+    const t = setTimeout(() => res(false), 8000);
+    v.onloadeddata = () => { clearTimeout(t); res(v.videoWidth > 0); };
+    v.onerror = () => { clearTimeout(t); res(false); };
+    v.src = url;
+  });
+}
+
+// ---------------------------------------------------------------- 3/4. trials
+$("b-start").onclick = async () => {
+  try { await document.documentElement.requestFullscreen(); } catch (e) {}
+  await runBlock(CONFIG.PRACTICE, "practice");
+  $("stage").classList.remove("on"); show("p-mid");
+};
+$("b-test").onclick = async () => {
+  try { if (!document.fullscreenElement) await document.documentElement.requestFullscreen(); } catch (e) {}
+  await runBlock(S.test_order, "test");
+  finish();
+};
+
+async function runBlock(ids, kind) {
+  show(null); $("stage").classList.add("on");
+  for (let k = 0; k < ids.length; k++) {
+    const label = (kind === "practice" ? "Practice " : "Video ") + (k + 1) + " of " + ids.length;
+    $("label").textContent = label; $("label").style.display = "block";
+    await sleep(CONFIG.LABEL_MS);
+    $("label").style.display = "none";
+    const play = await playClip(blobs[ids[k]]);
+    const score = await askScore();
+    S.trials.push({ kind, trial: k + 1, video_id: ids[k], score: score.value, rating_ms: score.ms,
+                    stalls: play.stalls, dropped_frames: play.dropped, total_frames: play.total });
+    store("acr_" + S.observer_id, JSON.stringify(S));
+  }
+}
+
+function playClip(url) {
+  return new Promise(res => {
+    const v = $("vid");
+    let stalls = 0;
+    v.onwaiting = () => stalls++;
+    v.onended = () => {
+      const q = v.getVideoPlaybackQuality ? v.getVideoPlaybackQuality() : {};
+      v.style.display = "none";
+      res({ stalls, dropped: q.droppedVideoFrames ?? null, total: q.totalVideoFrames ?? null });
+    };
+    v.src = url; v.currentTime = 0; v.style.display = "block";
+    v.play().catch(() => { v.controls = true; });          // fallback: let the viewer press play
+  });
+}
+
+function askScore() {
+  return new Promise(res => {
+    const t0 = performance.now();
+    $("rate").style.display = "block";
+    $("rate").querySelectorAll("button").forEach(b => b.onclick = () => {
+      $("rate").style.display = "none";
+      res({ value: Number(b.dataset.s), ms: Math.round(performance.now() - t0) });
+    });
+  });
+}
+
+// ---------------------------------------------------------------- 5. submit
+function toCSV() {
+  const head = ["observer_id", "kind", "trial", "video_id", "score", "rating_ms", "stalls", "dropped_frames", "total_frames"];
+  return [head.join(",")].concat(S.trials.map(t => [S.observer_id, t.kind, t.trial, t.video_id, t.score,
+    t.rating_ms, t.stalls, t.dropped_frames, t.total_frames].join(","))).join("\n");
+}
+async function finish() {
+  S.finished = new Date().toISOString();
+  store("acr_" + S.observer_id, JSON.stringify(S));
+  try { if (document.fullscreenElement) await document.exitFullscreen(); } catch (e) {}
+  $("stage").classList.remove("on"); show("p-end");
+  $("end-id").textContent = S.observer_id;
+  if (CONFIG.FORM_URL && CONFIG.FORM_ENTRY) {
+    try {
+      await fetch(CONFIG.FORM_URL, { method: "POST", mode: "no-cors",
+        body: new URLSearchParams({ [CONFIG.FORM_ENTRY]: JSON.stringify(S) }) });
+      $("end-msg").textContent = "Your answers have been submitted. You can close this page.";
+      return;
+    } catch (e) {
+      $("end-msg").textContent = "Automatic submission failed. Please download your answers and send the file to the researcher.";
+    }
+  } else {
+    $("end-msg").textContent = "Pilot mode: please download your answers.";
+  }
+  $("end-dl").style.display = "block";
+}
+$("b-dl").onclick = () => {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([toCSV()], { type: "text/csv" }));
+  a.download = "acr_" + S.observer_id + ".csv"; a.click();
+};
+</script>
+</body>
+</html>
