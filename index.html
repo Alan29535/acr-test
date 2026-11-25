@@ -37,12 +37,15 @@
 <!-- 1. consent -->
 <section class="page on" id="p-consent">
   <h1>Video Quality Rating</h1>
-  <p>This is a short study for a Digital Video Processing course project at Chulalongkorn University.
+  <p>This is a short video quality study at Chulalongkorn University.
      You will watch <b>18 short videos</b> (10 seconds each, about 6 minutes in total) and rate the picture quality of each one.</p>
   <p>No personal information is collected. Your answers are stored under a random ID. Taking part is voluntary,
      and you can stop at any time by closing this page; nothing is submitted until the end.</p>
   <p>Please use a <b>laptop or desktop computer</b> in a quiet room, set the screen to full brightness,
-     and sit at a normal viewing distance.</p>
+     and sit at a normal viewing distance. Please take part <b>only once</b>.</p>
+  <p id="phone-warn" class="err" style="display:none">You seem to be using a phone or tablet.
+     Small screens hide differences between videos, so please open this link on a computer if you can.</p>
+  <p class="muted">About 23 MB of video is loaded into your browser for smooth playback; nothing is saved to your device.</p>
   <p><label><input type="checkbox" id="agree"> I agree to take part in this study.</label></p>
   <button id="b-consent" disabled>Continue</button>
 </section>
@@ -107,7 +110,7 @@ const CONFIG = {
   PRACTICE: ["p1", "p2", "p3"],                 // fixed order: bad -> good -> excellent
   TEST: Array.from({length: 15}, (_, i) => "v" + String(i + 1).padStart(2, "0")),
   LABEL_MS: 1500,                               // "Video k of N" before each clip
-  VERSION: "acr-web-1"
+  VERSION: "acr-web-2"                          // 2: stall count fixed, phone advice
 };
 
 // ---------------------------------------------------------------- helpers
@@ -134,6 +137,10 @@ const S = {                                                // session record
 const blobs = {};
 
 // ---------------------------------------------------------------- 1. consent
+if (/iPhone|iPad|Android|Mobile/i.test(navigator.userAgent) ||
+    (navigator.maxTouchPoints > 1 && /Macintosh/.test(navigator.userAgent) && screen.width < 1100)) {
+  $("phone-warn").style.display = "block";                // advice only; participation is not blocked
+}
 $("agree").onchange = e => $("b-consent").disabled = !e.target.checked;
 $("b-consent").onclick = () => { show("p-load"); load(); };
 
@@ -204,8 +211,10 @@ async function runBlock(ids, kind) {
 function playClip(url) {
   return new Promise(res => {
     const v = $("vid");
-    let stalls = 0;
-    v.onwaiting = () => stalls++;
+    // count only rebuffering after playback has started (the initial load always fires "waiting")
+    let stalls = 0, started = false;
+    v.onplaying = () => { started = true; };
+    v.onwaiting = () => { if (started) stalls++; };
     v.onended = () => {
       const q = v.getVideoPlaybackQuality ? v.getVideoPlaybackQuality() : {};
       v.style.display = "none";
