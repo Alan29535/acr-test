@@ -110,7 +110,7 @@ const CONFIG = {
   PRACTICE: ["p1", "p2", "p3"],                 // fixed order: bad -> good -> excellent
   TEST: Array.from({length: 15}, (_, i) => "v" + String(i + 1).padStart(2, "0")),
   LABEL_MS: 1500,                               // "Video k of N" before each clip
-  VERSION: "acr-web-3"                          // 2: stall fix, phone advice; 3: robust playback check
+  VERSION: "acr-web-4"                          // 2: stall fix, phone advice; 3-4: robust playback check
 };
 
 // ---------------------------------------------------------------- helpers
@@ -134,7 +134,8 @@ const S = {                                                // session record
   screen: { w: screen.width, h: screen.height, dpr: window.devicePixelRatio },
   test_order: shuffle(CONFIG.TEST), trials: []
 };
-const blobs = {};
+const blobs = {}, direct = {};
+let SRC = blobs;                                           // what the trials play from
 
 // ---------------------------------------------------------------- 1. consent
 if (/iPhone|iPad|Android|Mobile/i.test(navigator.userAgent) ||
@@ -154,7 +155,9 @@ async function load() {
       let r = await fetch("videos/" + id + ".mp4");
       if (!r.ok) r = await fetch(id + ".mp4");
       if (!r.ok) throw new Error("HTTP " + r.status + " for " + id);
-      blobs[id] = URL.createObjectURL(await r.blob());
+      // explicit MIME type: iOS Safari is pickier about untyped blobs
+      blobs[id] = URL.createObjectURL(new Blob([await r.arrayBuffer()], { type: "video/mp4" }));
+      direct[id] = r.url;                                  // fallback: play from the site (now in HTTP cache)
       $("bar").style.width = (100 * ++done / all.length) + "%";
       $("load-msg").textContent = done + " / " + all.length;
     }
@@ -166,9 +169,15 @@ async function load() {
 }
 async function checkPlayback() {
   $("load-msg").textContent = "Checking that your browser can play the videos…";
-  const r = await canPlay(blobs[CONFIG.PRACTICE[0]]);
-  if (r === "yes") { show("p-instr"); return; }
-  if (r === "no") {
+  const first = CONFIG.PRACTICE[0];
+  // 1) in-memory copy, 2) the same once more (first decoder start can fail on iOS),
+  // 3) direct from the site. Only if every attempt reports "cannot decode" is HEVC treated as unsupported.
+  let r = await canPlay(blobs[first]);
+  if (r !== "yes") { await sleep(1000); r = await canPlay(blobs[first]); }
+  if (r === "yes") { SRC = blobs; S.playback = "memory"; show("p-instr"); return; }
+  const r2 = await canPlay(direct[first]);
+  if (r2 === "yes") { SRC = direct; S.playback = "direct"; show("p-instr"); return; }
+  if (r === "no" && r2 === "no") {
     $("load-msg").innerHTML = '<span class="err">Your browser cannot play these videos (HEVC/H.265).</span><br>' +
       'Please open this link in <b>Safari</b> or <b>Chrome</b> on a Mac, or in <b>Microsoft Edge / Chrome</b> on a recent Windows PC.';
     return;
@@ -222,7 +231,7 @@ async function runBlock(ids, kind) {
     $("label").textContent = label; $("label").style.display = "block";
     await sleep(CONFIG.LABEL_MS);
     $("label").style.display = "none";
-    const play = await playClip(blobs[ids[k]]);
+    const play = await playClip(SRC[ids[k]]);
     const score = await askScore();
     S.trials.push({ kind, trial: k + 1, video_id: ids[k], score: score.value, rating_ms: score.ms,
                     stalls: play.stalls, dropped_frames: play.dropped, total_frames: play.total });
