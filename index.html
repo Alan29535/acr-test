@@ -110,7 +110,7 @@ const CONFIG = {
   PRACTICE: ["p1", "p2", "p3"],                 // fixed order: bad -> good -> excellent
   TEST: Array.from({length: 15}, (_, i) => "v" + String(i + 1).padStart(2, "0")),
   LABEL_MS: 1500,                               // "Video k of N" before each clip
-  VERSION: "acr-web-2"                          // 2: stall count fixed, phone advice
+  VERSION: "acr-web-3"                          // 2: stall fix, phone advice; 3: robust playback check
 };
 
 // ---------------------------------------------------------------- helpers
@@ -162,22 +162,44 @@ async function load() {
     $("load-msg").innerHTML = '<span class="err">Download failed (' + e.message + '). Please check your connection and reload the page.</span>';
     return;
   }
+  await checkPlayback();
+}
+async function checkPlayback() {
   $("load-msg").textContent = "Checking that your browser can play the videos…";
-  if (!(await canPlay(blobs[CONFIG.PRACTICE[0]]))) {
+  const r = await canPlay(blobs[CONFIG.PRACTICE[0]]);
+  if (r === "yes") { show("p-instr"); return; }
+  if (r === "no") {
     $("load-msg").innerHTML = '<span class="err">Your browser cannot play these videos (HEVC/H.265).</span><br>' +
       'Please open this link in <b>Safari</b> or <b>Chrome</b> on a Mac, or in <b>Microsoft Edge / Chrome</b> on a recent Windows PC.';
     return;
   }
-  show("p-instr");
+  // "slow": no answer yet; not proof that the browser lacks HEVC support
+  $("load-msg").innerHTML = 'The video check is taking longer than usual. Please keep this tab open and in front, then ' +
+    '<button id="b-retry">Try again</button>';
+  $("b-retry").onclick = checkPlayback;                  // videos are already downloaded; only the check reruns
 }
-function canPlay(url) {
+// Returns "yes", "no" (the browser reported it cannot decode HEVC) or "slow" (no answer in time).
+// A slow first decode (decoder start-up, busy computer, page in a background tab) must not be
+// mistaken for "no": the caller offers a retry instead.
+async function canPlay(url) {
+  while (document.hidden) await sleep(500);              // browsers defer media work in hidden tabs
   return new Promise(res => {
     const v = document.createElement("video");
-    v.muted = true; v.playsInline = true;
-    const t = setTimeout(() => res(false), 8000);
-    v.onloadeddata = () => { clearTimeout(t); res(v.videoWidth > 0); };
-    v.onerror = () => { clearTimeout(t); res(false); };
+    v.muted = true; v.playsInline = true; v.preload = "auto";
+    v.style.cssText = "position:fixed;left:0;top:0;width:2px;height:2px;opacity:0;pointer-events:none";
+    document.body.appendChild(v);                         // Safari may not load a detached element
+    let done = false;
+    const end = r => { if (done) return; done = true; clearTimeout(t); v.pause(); v.remove(); res(r); };
+    const ok = () => { if (v.videoWidth > 0) end("yes"); };
+    const t = setTimeout(() => end("slow"), 20000);
+    v.onloadeddata = ok; v.oncanplay = ok; v.onplaying = ok;
+    v.onerror = () => {
+      const c = v.error && v.error.code;                  // 3 = decode error, 4 = format not supported
+      end(c === 3 || c === 4 ? "no" : "slow");
+    };
     v.src = url;
+    v.load();
+    v.play().catch(() => {});                             // forces a first decode where allowed
   });
 }
 
